@@ -100,6 +100,13 @@ u-do-it:
     just send-packet optimism
     echo "You've done it!"
 
+set-up-bridge:
+    echo "Running the full E2E flow..."
+    just set-contracts optimism Bridge false && just set-contracts base Bridge false
+    just deploy optimism base
+    just sanity-check
+    just create-channel
+
 # Clean up the environment by removing the artifacts and cache folders and running the forge clean command
 # Usage: just clean
 clean:

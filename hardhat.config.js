@@ -1,5 +1,6 @@
 require('@nomicfoundation/hardhat-toolbox');
 require('@nomicfoundation/hardhat-foundry');
+require('@nomicfoundation/hardhat-verify');
 
 require('dotenv').config();
 
@@ -46,6 +47,10 @@ module.exports = {
     libraries: './lib',
   },
   etherscan: {
+    apiKey: {
+      optimism: process.env.OP_BLOCKSCOUT_API_KEY,
+      base: process.env.BASE_BLOCKSCOUT_API_KEY,
+    },
     customChains: [
       {
         network: 'base',
