@@ -2,20 +2,26 @@
 
 pragma solidity ^0.8.9;
 
-import './base/CustomChanIbcApp.sol';
-import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
-import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
+import "./base/CustomChanIbcApp.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {PriceFeeds} from "./PriceFeeds.sol";
 
 contract Bridge is CustomChanIbcApp {
     using SafeERC20 for IERC20;
 
+    address public priceAggregator; // price aggregator contract address
+    address public priceFeedAddress; // price feed contract address
+
+    mapping(uint256 => address) public priceFeedAddressByNetworkID; // tgtNetworkID => priceFeedAddress
     mapping(address => mapping(uint256 => address)) public crossChainTokenRouter; // token => tgtNetworkID => tokenAddress
-    mapping(uint256 => mapping(address => uint256)) public crossChainTokenBalance; // tgtNetworkID => token => balance | zero address means native token
+    mapping(uint256 => mapping(address => uint256)) public crossChainBalance; // tgtNetworkID => token => balance | zero address means native token
 
     error TokenNotSupported(address tokenAddress);
     error InsufficientTreasuryBalance(uint256 balance, uint256 amount);
     error InsufficientBalance(uint256 balance, uint256 amount);
     error InsufficientAllowance(uint256 allowance, uint256 amount);
+    error InvalidCoinPrices();
     error ZeroAddress();
     error ZeroAmount();
 
@@ -33,7 +39,35 @@ contract Bridge is CustomChanIbcApp {
         _;
     }
 
-    constructor(IbcDispatcher _dispatcher) CustomChanIbcApp(_dispatcher) {}
+    constructor(IbcDispatcher _dispatcher, address _priceAggregator, address _priceFeedAddress) CustomChanIbcApp(_dispatcher) {
+        priceAggregator = _priceAggregator;
+        priceFeedAddress = _priceFeedAddress;
+    }
+
+    /**
+     *   @dev Set the price aggregator contract address
+     *   @param newPriceAggregator the address of the price aggregator contract
+     */
+    function setPriceAggregator(address newPriceAggregator) external onlyOwner {
+        priceAggregator = newPriceAggregator;
+    }
+
+    /**
+     *   @dev Set the price feed contract address
+     *   @param newPriceFeedAddress the address of the price feed contract
+     */
+    function setPriceFeedAddress(address newPriceFeedAddress) external onlyOwner {
+        priceFeedAddress = newPriceFeedAddress;
+    }
+
+    /**
+     *   @dev Support a network for native coin bridging
+     *   @param tgtNetworkID the ID of the target network
+     *   @param _priceFeedAddress the address of the price feed contract on the target network
+     */
+    function supportNetwork(uint256 tgtNetworkID, address _priceFeedAddress) external onlyOwner {
+        priceFeedAddressByNetworkID[tgtNetworkID] = _priceFeedAddress;
+    }
 
     /**
      *   @dev Support a token on a target network
@@ -52,7 +86,7 @@ contract Bridge is CustomChanIbcApp {
      *   @param amount the amount to increase the treasury balance by
      */
     function increaseTreasuryBalance(uint256 tgtNetworkID, address tgtTokenAddress, uint256 amount) external onlyOwner {
-        crossChainTokenBalance[tgtNetworkID][tgtTokenAddress] += amount;
+        crossChainBalance[tgtNetworkID][tgtTokenAddress] += amount;
     }
 
     /**
@@ -62,11 +96,11 @@ contract Bridge is CustomChanIbcApp {
      *   @param amount the amount to decrease the treasury balance by
      */
     function decreaseTreasuryBalance(uint256 tgtNetworkID, address tgtTokenAddress, uint256 amount) external onlyOwner {
-        uint256 balance = crossChainTokenBalance[tgtNetworkID][tgtTokenAddress];
+        uint256 balance = crossChainBalance[tgtNetworkID][tgtTokenAddress];
         if (balance < amount) {
             revert InsufficientTreasuryBalance(balance, amount);
         }
-        crossChainTokenBalance[tgtNetworkID][tgtTokenAddress] -= amount;
+        crossChainBalance[tgtNetworkID][tgtTokenAddress] -= amount;
     }
 
     /**
@@ -76,7 +110,23 @@ contract Bridge is CustomChanIbcApp {
      *   @param to the address to send the coins to
      */
     function bridgeCoins(bytes32 channelId, uint256 tgtNetworkID, address to) external payable checkZeroAddress(to) checkZeroAmount(msg.value) {
-        // TODO: implement
+        (int srcNetworkCoinPrice, uint8 srcNetworkCoinDecimals) = PriceFeeds(priceAggregator).getPrice(priceFeedAddress);
+        (int tgtNetworkCoinPrice, uint8 tgtNetworkCoinDecimals) = PriceFeeds(priceAggregator).getPrice(priceFeedAddressByNetworkID[tgtNetworkID]);
+
+        if (srcNetworkCoinPrice <= 0 || tgtNetworkCoinPrice <= 0) {
+            revert InvalidCoinPrices();
+        }
+
+        uint256 srcPriceInWei = uint256(srcNetworkCoinPrice) * 10 ** (18 - srcNetworkCoinDecimals);
+        uint256 tgtPriceInWei = uint256(tgtNetworkCoinPrice) * 10 ** (18 - tgtNetworkCoinDecimals);
+
+        uint256 amountOut = (msg.value * tgtPriceInWei) / srcPriceInWei;
+
+        crossChainBalance[tgtNetworkID][address(0)] -= amountOut;
+
+        bytes memory bridgeData = abi.encode(block.chainid, tgtNetworkID, msg.sender, to, msg.value, amountOut);
+        bytes memory payload = abi.encode(true, bridgeData);
+        _sendPacket(channelId, 10 hours, payload);
     }
 
     /**
@@ -96,7 +146,7 @@ contract Bridge is CustomChanIbcApp {
     ) external checkZeroAddress(to) checkZeroAmount(amount) {
         address sender = msg.sender;
         address tgtTokenAddress = crossChainTokenRouter[srcTokenAddress][tgtNetworkID];
-        uint256 treasuryBalance = crossChainTokenBalance[tgtNetworkID][tgtTokenAddress];
+        uint256 treasuryBalance = crossChainBalance[tgtNetworkID][tgtTokenAddress];
         if (tgtTokenAddress == address(0)) {
             revert TokenNotSupported(tgtTokenAddress);
         }
@@ -117,9 +167,10 @@ contract Bridge is CustomChanIbcApp {
 
         token.safeTransferFrom(sender, address(this), amount);
 
-        crossChainTokenBalance[tgtNetworkID][tgtTokenAddress] -= amount;
+        crossChainBalance[tgtNetworkID][tgtTokenAddress] -= amount;
 
-        bytes memory payload = abi.encode(false, tgtNetworkID, srcTokenAddress, tgtTokenAddress, sender, to, amount);
+        bytes memory bridgeData = abi.encode(block.chainid, tgtNetworkID, srcTokenAddress, tgtTokenAddress, sender, to, amount);
+        bytes memory payload = abi.encode(false, bridgeData);
         _sendPacket(channelId, 10 hours, payload);
     }
 
@@ -132,20 +183,36 @@ contract Bridge is CustomChanIbcApp {
     function onRecvPacket(IbcPacket memory packet) external override onlyIbcDispatcher returns (AckPacket memory ackPacket) {
         recvedPackets.push(packet);
 
-        (bool isNativeTransfer, , , address tgtTokenAddress, , address to, uint256 amount) = abi.decode(
-            packet.data,
-            (bool, uint256, address, address, address, address, uint256)
-        );
+        (bool isNativeTransfer, bytes memory bridgeData) = abi.decode(packet.data, (bool, bytes));
 
         if (isNativeTransfer) {
-            // for native token
+            uint256 balance = address(this).balance;
+            (uint256 srcNetworkID, , , address to, , uint256 amountOut) = abi.decode(
+                bridgeData,
+                (uint256, uint256, address, address, uint256, uint256)
+            );
+            if (balance < amountOut) {
+                return AckPacket(false, packet.data);
+            } else {
+                payable(to).transfer(amountOut);
+                crossChainBalance[srcNetworkID][address(0)] += amountOut;
+                return AckPacket(true, packet.data);
+            }
         } else {
+            (uint256 srcNetworkID, , , address tgtTokenAddress, , address to, uint256 amount) = abi.decode(
+                bridgeData,
+                (uint256, uint256, address, address, address, address, uint256)
+            );
             IERC20 token = IERC20(tgtTokenAddress);
             if (token.balanceOf(address(this)) < amount) {
                 return AckPacket(false, packet.data);
             } else {
-                token.safeTransfer(to, amount);
-                return AckPacket(true, packet.data);
+                try token.transfer(to, amount) {
+                    crossChainBalance[srcNetworkID][tgtTokenAddress] += amount;
+                    return AckPacket(true, packet.data);
+                } catch {
+                    return AckPacket(false, packet.data);
+                }
             }
         }
     }
@@ -160,15 +227,23 @@ contract Bridge is CustomChanIbcApp {
         ackPackets.push(ack);
 
         if (!ack.success) {
-            (bool isNativeTransfer, uint256 tgtNetworkID, address srcTokenAddress, address tgtTokenAddress, address sender, , uint256 amount) = abi
-                .decode(ack.data, (bool, uint256, address, address, address, address, uint256));
+            (bool isNativeTransfer, bytes memory bridgeData) = abi.decode(ack.data, (bool, bytes));
 
             if (isNativeTransfer) {
-                // for native token
+                (, uint256 tgtNetworkID, address sender, , uint256 amountIn, ) = abi.decode(
+                    bridgeData,
+                    (uint256, uint256, address, address, uint256, uint256)
+                );
+                payable(sender).transfer(amountIn);
+                crossChainBalance[tgtNetworkID][address(0)] += amountIn;
             } else {
+                (, uint256 tgtNetworkID, address srcTokenAddress, address tgtTokenAddress, address sender, , uint256 amount) = abi.decode(
+                    bridgeData,
+                    (uint256, uint256, address, address, address, address, uint256)
+                );
                 IERC20 token = IERC20(srcTokenAddress);
                 token.safeTransfer(sender, amount);
-                crossChainTokenBalance[tgtNetworkID][tgtTokenAddress] += amount;
+                crossChainBalance[tgtNetworkID][tgtTokenAddress] += amount;
             }
         }
     }
