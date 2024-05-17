@@ -10,10 +10,8 @@ import {PriceFeeds} from "./PriceFeeds.sol";
 contract Bridge is CustomChanIbcApp {
     using SafeERC20 for IERC20;
 
-    address public priceAggregator; // price aggregator contract address
-    address public priceFeedAddress; // price feed contract address
+    PriceFeeds public priceAggregator;
 
-    mapping(uint256 => address) public priceFeedAddressByNetworkID; // tgtNetworkID => priceFeedAddress
     mapping(address => mapping(uint256 => address)) public crossChainTokenRouter; // token => tgtNetworkID => tokenAddress
     mapping(uint256 => mapping(address => uint256)) public crossChainBalance; // tgtNetworkID => token => balance | zero address means native token
 
@@ -39,34 +37,8 @@ contract Bridge is CustomChanIbcApp {
         _;
     }
 
-    constructor(IbcDispatcher _dispatcher, address _priceAggregator, address _priceFeedAddress) CustomChanIbcApp(_dispatcher) {
-        priceAggregator = _priceAggregator;
-        priceFeedAddress = _priceFeedAddress;
-    }
-
-    /**
-     *   @dev Set the price aggregator contract address
-     *   @param newPriceAggregator the address of the price aggregator contract
-     */
-    function setPriceAggregator(address newPriceAggregator) external onlyOwner {
-        priceAggregator = newPriceAggregator;
-    }
-
-    /**
-     *   @dev Set the price feed contract address
-     *   @param newPriceFeedAddress the address of the price feed contract
-     */
-    function setPriceFeedAddress(address newPriceFeedAddress) external onlyOwner {
-        priceFeedAddress = newPriceFeedAddress;
-    }
-
-    /**
-     *   @dev Support a network for native coin bridging
-     *   @param tgtNetworkID the ID of the target network
-     *   @param _priceFeedAddress the address of the price feed contract on the target network
-     */
-    function supportNetwork(uint256 tgtNetworkID, address _priceFeedAddress) external onlyOwner {
-        priceFeedAddressByNetworkID[tgtNetworkID] = _priceFeedAddress;
+    constructor(IbcDispatcher _dispatcher, address _oracle) CustomChanIbcApp(_dispatcher) {
+        priceAggregator = PriceFeeds(_oracle);
     }
 
     /**
@@ -109,22 +81,17 @@ contract Bridge is CustomChanIbcApp {
      *   @param tgtNetworkID the ID of the target network
      *   @param to the address to send the coins to
      */
-    function bridgeCoins(bytes32 channelId, uint256 tgtNetworkID, address to) external payable checkZeroAddress(to) checkZeroAmount(msg.value) {
-        (int srcNetworkCoinPrice, uint8 srcNetworkCoinDecimals) = PriceFeeds(priceAggregator).getPrice(priceFeedAddress);
-        (int tgtNetworkCoinPrice, uint8 tgtNetworkCoinDecimals) = PriceFeeds(priceAggregator).getPrice(priceFeedAddressByNetworkID[tgtNetworkID]);
-
-        if (srcNetworkCoinPrice <= 0 || tgtNetworkCoinPrice <= 0) {
-            revert InvalidCoinPrices();
-        }
-
-        uint256 srcPriceInWei = uint256(srcNetworkCoinPrice) * 10 ** (18 - srcNetworkCoinDecimals);
-        uint256 tgtPriceInWei = uint256(tgtNetworkCoinPrice) * 10 ** (18 - tgtNetworkCoinDecimals);
-
-        uint256 amountOut = (msg.value * tgtPriceInWei) / srcPriceInWei;
+    function bridgeCoins(
+        bytes32 channelId,
+        uint256 tgtNetworkID,
+        address to,
+        uint256 slippage
+    ) external payable checkZeroAddress(to) checkZeroAmount(msg.value) {
+        uint256 amountOut = _calculateAmountOut(block.chainid, tgtNetworkID, msg.value);
 
         crossChainBalance[tgtNetworkID][address(0)] -= amountOut;
 
-        bytes memory bridgeData = abi.encode(block.chainid, tgtNetworkID, msg.sender, to, msg.value, amountOut);
+        bytes memory bridgeData = abi.encode(block.chainid, tgtNetworkID, msg.sender, to, msg.value, amountOut, slippage);
         bytes memory payload = abi.encode(true, bridgeData);
         _sendPacket(channelId, 10 hours, payload);
     }
@@ -187,11 +154,17 @@ contract Bridge is CustomChanIbcApp {
 
         if (isNativeTransfer) {
             uint256 balance = address(this).balance;
-            (uint256 srcNetworkID, , , address to, , uint256 amountOut) = abi.decode(
+            (uint256 srcNetworkID, , , address to, , uint256 amountOut, uint256 slippage) = abi.decode(
                 bridgeData,
-                (uint256, uint256, address, address, uint256, uint256)
+                (uint256, uint256, address, address, uint256, uint256, uint256)
             );
-            if (balance < amountOut) {
+
+            uint256 calculatedAmountOut = _calculateAmountOut(srcNetworkID, block.chainid, amountOut);
+            uint256 slippageAmount = (amountOut * slippage) / 10000;
+
+            if (calculatedAmountOut < amountOut - slippageAmount) {
+                return AckPacket(false, packet.data);
+            } else if (balance < amountOut) {
                 return AckPacket(false, packet.data);
             } else {
                 payable(to).transfer(amountOut);
@@ -230,9 +203,9 @@ contract Bridge is CustomChanIbcApp {
             (bool isNativeTransfer, bytes memory bridgeData) = abi.decode(ack.data, (bool, bytes));
 
             if (isNativeTransfer) {
-                (, uint256 tgtNetworkID, address sender, , uint256 amountIn, ) = abi.decode(
+                (, uint256 tgtNetworkID, address sender, , uint256 amountIn, , ) = abi.decode(
                     bridgeData,
-                    (uint256, uint256, address, address, uint256, uint256)
+                    (uint256, uint256, address, address, uint256, uint256, uint256)
                 );
                 payable(sender).transfer(amountIn);
                 crossChainBalance[tgtNetworkID][address(0)] += amountIn;
@@ -271,5 +244,21 @@ contract Bridge is CustomChanIbcApp {
 
         // calling the Dispatcher to send the packet
         dispatcher.sendPacket(channelId, payload, timeoutTimestamp);
+    }
+
+    function _calculateAmountOut(uint256 srcNetworkID, uint256 tgtNetworkID, uint256 amountIn) internal view returns (uint256) {
+        (int srcNetworkCoinPrice, int32 srcNetworkCoinDecimals) = priceAggregator.getPrice(srcNetworkID);
+        (int tgtNetworkCoinPrice, int32 tgtNetworkCoinDecimals) = priceAggregator.getPrice(tgtNetworkID);
+
+        if (srcNetworkCoinPrice <= 0 || tgtNetworkCoinPrice <= 0) {
+            revert InvalidCoinPrices();
+        }
+
+        uint256 srcPriceInWei = uint256(int256(srcNetworkCoinPrice)) * 10 ** uint256(int256(18 + srcNetworkCoinDecimals));
+        uint256 tgtPriceInWei = uint256(int256(tgtNetworkCoinPrice)) * 10 ** uint256(int256(18 + tgtNetworkCoinDecimals));
+
+        uint256 amountOut = (amountIn * tgtPriceInWei) / srcPriceInWei;
+
+        return amountOut;
     }
 }
