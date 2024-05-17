@@ -1,16 +1,43 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.7;
+pragma solidity ^0.8.9;
 
-import {AggregatorV3Interface} from "./AggregatorV3Interface.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract PriceFeeds {
-    function getPrice(address addr) public view returns (int, uint8) {
-        AggregatorV3Interface dataFeed = AggregatorV3Interface(addr);
+interface IPythPriceFeeds {
+    struct Price {
+        // Price
+        int64 price;
+        // Confidence interval around the price
+        uint64 conf;
+        // Price exponent
+        int32 expo;
+        // Unix timestamp describing when the price was published
+        uint publishTime;
+    }
 
-        (, int answer, , , ) = dataFeed.latestRoundData();
+    function getPriceUnsafe(bytes32 id) external view returns (Price memory price);
+}
 
-        uint8 decimals = dataFeed.decimals();
+contract PriceFeeds is Ownable {
+    IPythPriceFeeds public oracle;
 
-        return (answer, decimals);
+    mapping(uint256 => bytes32) public priceFeeds;
+
+    constructor(address _oracle) Ownable() {
+        oracle = IPythPriceFeeds(_oracle);
+    }
+
+    function setOracle(address _oracle) external onlyOwner {
+        oracle = IPythPriceFeeds(_oracle);
+    }
+
+    function setPriceFeed(uint256 chainID, bytes32 feed) external onlyOwner {
+        priceFeeds[chainID] = feed;
+    }
+
+    function getPrice(uint256 chainID) external view returns (int, int32) {
+        IPythPriceFeeds.Price memory price = oracle.getPriceUnsafe(priceFeeds[chainID]);
+
+        return (price.price, price.expo);
     }
 }
