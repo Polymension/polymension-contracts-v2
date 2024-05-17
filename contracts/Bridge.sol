@@ -2,10 +2,10 @@
 
 pragma solidity ^0.8.9;
 
-import "./base/CustomChanIbcApp.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {PriceFeeds} from "./PriceFeeds.sol";
+import './base/CustomChanIbcApp.sol';
+import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
+import {PriceFeeds} from './PriceFeeds.sol';
 
 contract Bridge is CustomChanIbcApp {
     using SafeERC20 for IERC20;
@@ -38,6 +38,14 @@ contract Bridge is CustomChanIbcApp {
     }
 
     constructor(IbcDispatcher _dispatcher, address _oracle) CustomChanIbcApp(_dispatcher) {
+        priceAggregator = PriceFeeds(_oracle);
+    }
+
+    /**
+     *   @dev Set the oracle contract
+     *   @param _oracle the address of the oracle contract
+     */
+    function setOracle(address _oracle) external onlyOwner {
         priceAggregator = PriceFeeds(_oracle);
     }
 
