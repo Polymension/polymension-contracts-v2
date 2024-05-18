@@ -175,7 +175,10 @@ contract Bridge is CustomChanIbcApp {
             } else if (balance < amountOut) {
                 return AckPacket(false, packet.data);
             } else {
-                payable(to).transfer(amountOut);
+                (bool sent, bytes memory data) = payable(to).call{value: amountOut}('');
+                if (!sent) {
+                    return AckPacket(false, packet.data);
+                }
                 crossChainBalance[srcNetworkID][address(0)] += amountOut;
                 return AckPacket(true, packet.data);
             }
@@ -215,7 +218,10 @@ contract Bridge is CustomChanIbcApp {
                     bridgeData,
                     (uint256, uint256, address, address, uint256, uint256, uint256)
                 );
-                payable(sender).transfer(amountIn);
+                (bool sent, bytes memory data) = payable(sender).call{value: amountIn}('');
+                if (!sent) {
+                    revert InsufficientBalance(address(this).balance, amountIn);
+                }
                 crossChainBalance[tgtNetworkID][address(0)] += amountIn;
             } else {
                 (, uint256 tgtNetworkID, address srcTokenAddress, address tgtTokenAddress, address sender, , uint256 amount) = abi.decode(
@@ -269,4 +275,7 @@ contract Bridge is CustomChanIbcApp {
 
         return amountOut;
     }
+
+    // Fallback function is called when msg.data is not empty
+    fallback() external payable {}
 }
