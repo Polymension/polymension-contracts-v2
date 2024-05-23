@@ -101,10 +101,11 @@ u-do-it:
     echo "You've done it!"
 
 set-up-bridge:
-    echo "Running the full E2E flow..."
+    echo "Deploying the bridge contracts..."
     just set-contracts optimism Bridge false && just set-contracts base Bridge false
     just deploy optimism base
     just sanity-check
+    just verify-bridge
     just create-channel
 
 # Clean up the environment by removing the artifacts and cache folders and running the forge clean command
@@ -126,3 +127,6 @@ clean-all:
 # Usage: just verify-contract [chain] [contract address]
 verify-contract CHAIN CONTRACT_ADDRESS:
     node scripts/private/_verify.js {{CHAIN}} {{CONTRACT_ADDRESS}}
+
+verify-bridge:
+    node scripts/private/_verify_bridge.js

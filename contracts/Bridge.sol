@@ -21,6 +21,7 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
     error InsufficientBalance(uint256 balance, uint256 amount);
     error InsufficientAllowance(uint256 allowance, uint256 amount);
     error InvalidCoinPrices();
+    error InvalidParameter();
     error ZeroAddress();
     error ZeroAmount();
 
@@ -38,9 +39,7 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
         _;
     }
 
-    constructor(IbcDispatcher _dispatcher, address _oracle) CustomChanIbcApp(_dispatcher) {
-        priceAggregator = PriceFeeds(_oracle);
-    }
+    constructor(IbcDispatcher _dispatcher) CustomChanIbcApp(_dispatcher) {}
 
     /**
      *   @dev Set the oracle contract
