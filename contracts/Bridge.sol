@@ -2,12 +2,13 @@
 
 pragma solidity ^0.8.9;
 
-import './base/CustomChanIbcApp.sol';
-import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
-import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import {PriceFeeds} from './PriceFeeds.sol';
+import "./base/CustomChanIbcApp.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {PriceFeeds} from "./PriceFeeds.sol";
 
-contract Bridge is CustomChanIbcApp {
+contract Bridge is CustomChanIbcApp, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     PriceFeeds public priceAggregator;
@@ -94,7 +95,7 @@ contract Bridge is CustomChanIbcApp {
         uint256 tgtNetworkID,
         address to,
         uint256 slippage
-    ) external payable checkZeroAddress(to) checkZeroAmount(msg.value) {
+    ) external payable nonReentrant checkZeroAddress(to) checkZeroAmount(msg.value) {
         uint256 amountOut = _calculateAmountOut(block.chainid, tgtNetworkID, msg.value);
 
         crossChainBalance[tgtNetworkID][address(0)] -= amountOut;
@@ -118,7 +119,7 @@ contract Bridge is CustomChanIbcApp {
         uint256 tgtNetworkID,
         address to,
         uint256 amount
-    ) external checkZeroAddress(to) checkZeroAmount(amount) {
+    ) external nonReentrant checkZeroAddress(to) checkZeroAmount(amount) {
         address sender = msg.sender;
         address tgtTokenAddress = crossChainTokenRouter[srcTokenAddress][tgtNetworkID];
         uint256 treasuryBalance = crossChainBalance[tgtNetworkID][tgtTokenAddress];
@@ -175,7 +176,7 @@ contract Bridge is CustomChanIbcApp {
             } else if (balance < amountOut) {
                 return AckPacket(false, packet.data);
             } else {
-                (bool sent, bytes memory data) = payable(to).call{value: amountOut}('');
+                (bool sent, ) = payable(to).call{value: amountOut}("");
                 if (!sent) {
                     return AckPacket(false, packet.data);
                 }
@@ -218,7 +219,7 @@ contract Bridge is CustomChanIbcApp {
                     bridgeData,
                     (uint256, uint256, address, address, uint256, uint256, uint256)
                 );
-                (bool sent, bytes memory data) = payable(sender).call{value: amountIn}('');
+                (bool sent, ) = payable(sender).call{value: amountIn}("");
                 if (!sent) {
                     revert InsufficientBalance(address(this).balance, amountIn);
                 }
