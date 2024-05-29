@@ -102,6 +102,7 @@ u-do-it:
 
 set-up-bridge:
     echo "Deploying the bridge contracts..."
+    just compile
     just set-contracts optimism Bridge false && just set-contracts base Bridge false
     just deploy optimism base
     just sanity-check

@@ -183,7 +183,7 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
                 return AckPacket(true, packet.data);
             }
         } else {
-            (uint256 srcNetworkID, , , address tgtTokenAddress, , address to, uint256 amount) = abi.decode(
+            (uint256 srcNetworkID, , address srcTokenAddress, address tgtTokenAddress, , address to, uint256 amount) = abi.decode(
                 bridgeData,
                 (uint256, uint256, address, address, address, address, uint256)
             );
@@ -192,7 +192,7 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
                 return AckPacket(false, packet.data);
             } else {
                 try token.transfer(to, amount) {
-                    crossChainBalance[srcNetworkID][tgtTokenAddress] += amount;
+                    crossChainBalance[srcNetworkID][srcTokenAddress] += amount;
                     return AckPacket(true, packet.data);
                 } catch {
                     return AckPacket(false, packet.data);
