@@ -3,27 +3,22 @@
 pragma solidity ^0.8.9;
 
 import "./base/CustomChanIbcApp.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ReentrancyGuard} from "./security/ReentrancyGuard.sol";
-import {PriceFeeds} from "./PriceFeeds.sol";
 
-contract Bridge is CustomChanIbcApp, ReentrancyGuard {
-    using SafeERC20 for IERC20;
+contract BridgeNFT is CustomChanIbcApp, ReentrancyGuard {
+    address private _berc721;
 
-    PriceFeeds public priceAggregator;
+    mapping(address => mapping(uint256 => bool)) public isSupportedToken;
 
-    mapping(address => mapping(uint256 => address)) public crossChainTokenRouter; // token => tgtNetworkID => tokenAddress
-    mapping(uint256 => mapping(address => uint256)) public crossChainBalance; // tgtNetworkID => token => balance | zero address means native token
-
-    error TokenNotSupported(address tokenAddress);
-    error InsufficientTreasuryBalance(uint256 balance, uint256 amount);
-    error InsufficientBalance(uint256 balance, uint256 amount);
-    error InsufficientAllowance(uint256 allowance, uint256 amount);
-    error InvalidCoinPrices();
+    error TokenCannotBeBridged();
+    error InsufficientApproval(uint256 allowance, uint256 amount);
     error InvalidParameter();
     error ZeroAddress();
-    error ZeroAmount();
+    error NonexistentToken(uint256 tokenId);
+
+    event BridgeToken(bytes payload);
 
     modifier checkZeroAddress(address addr) {
         if (addr == address(0)) {
@@ -32,121 +27,65 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
         _;
     }
 
-    modifier checkZeroAmount(uint256 amount) {
-        if (amount == 0) {
-            revert ZeroAmount();
+    modifier checkZeroAmount(address nftCA, address addr, uint256 tokenId) {
+        IERC721 token = IERC721(nftCA);
+        if (token.ownerOf(tokenId) != addr) {
+            revert NonexistentToken(tokenId);
         }
         _;
     }
 
-    constructor(IbcDispatcher _dispatcher) CustomChanIbcApp(_dispatcher) {}
-
-    /**
-     *   @dev Set the oracle contract
-     *   @param _oracle the address of the oracle contract
-     */
-    function setOracle(address _oracle) external onlyOwner {
-        priceAggregator = PriceFeeds(_oracle);
-    }
-
-    /**
-     *   @dev Support a token on a target network
-     *   @param srcTokenAddress the address of the token on the source network
-     *   @param tgtNetworkID the ID of the target network
-     *   @param tgtTokenAddress the address of the token on the target network
-     */
-    function supportToken(address srcTokenAddress, uint256 tgtNetworkID, address tgtTokenAddress) external onlyOwner {
-        crossChainTokenRouter[srcTokenAddress][tgtNetworkID] = tgtTokenAddress;
-    }
-
-    /**
-     *   @dev Increase the treasury balance of a token on a target network
-     *   @param tgtNetworkID the ID of the target network
-     *   @param tgtTokenAddress the address of the token on the target network
-     *   @param amount the amount to increase the treasury balance by
-     */
-    function increaseTreasuryBalance(uint256 tgtNetworkID, address tgtTokenAddress, uint256 amount) external onlyOwner {
-        crossChainBalance[tgtNetworkID][tgtTokenAddress] += amount;
-    }
-
-    /**
-     *   @dev Decrease the treasury balance of a token on a target network
-     *   @param tgtNetworkID the ID of the target network
-     *   @param tgtTokenAddress the address of the token on the target network
-     *   @param amount the amount to decrease the treasury balance by
-     */
-    function decreaseTreasuryBalance(uint256 tgtNetworkID, address tgtTokenAddress, uint256 amount) external onlyOwner {
-        uint256 balance = crossChainBalance[tgtNetworkID][tgtTokenAddress];
-        if (balance < amount) {
-            revert InsufficientTreasuryBalance(balance, amount);
+    modifier checkBERC721(address nftCA) {
+        if (nftCA == _berc721) {
+            revert TokenCannotBeBridged();
         }
-        crossChainBalance[tgtNetworkID][tgtTokenAddress] -= amount;
+        _;
+    }
+
+    constructor(IbcDispatcher _dispatcher, address _initialOwner) CustomChanIbcApp(_dispatcher) Ownable(_initialOwner) {}
+
+    /**
+     *   @dev Set the address of the BERC721 contract
+     *   @param berc721 the address of the BERC721 contract
+     */
+    function setBERC721Address(address berc721) external onlyOwner {
+        _berc721 = berc721;
     }
 
     /**
-     *   @dev Bridge native coins to a target network
-     *   @param channelId the ID of the channel
-     *   @param tgtNetworkID the ID of the target network
-     *   @param to the address to send the coins to
+     * @dev Support a token for bridging
+     * @param srcTokenAddress the address of the token to be bridged
+     * @param tgtNetworkID the network ID of the target chain
      */
-    function bridgeCoins(
-        bytes32 channelId,
-        uint256 tgtNetworkID,
-        address to,
-        uint256 slippage
-    ) external payable nonReentrant checkZeroAddress(to) checkZeroAmount(msg.value) {
-        uint256 amountOut = _calculateAmountOut(block.chainid, tgtNetworkID, msg.value);
-
-        crossChainBalance[tgtNetworkID][address(0)] -= amountOut;
-
-        bytes memory bridgeData = abi.encode(block.chainid, tgtNetworkID, msg.sender, to, msg.value, amountOut, slippage);
-        bytes memory payload = abi.encode(true, bridgeData);
-        _sendPacket(channelId, 10 hours, payload);
+    function supportToken(address srcTokenAddress, uint256 tgtNetworkID) external onlyOwner {
+        isSupportedToken[srcTokenAddress][tgtNetworkID] = true;
     }
 
-    /**
-     *   @dev Bridge tokens to a target network
-     *   @param channelId the ID of the channel
-     *   @param srcTokenAddress the address of the token on the source network
-     *   @param tgtNetworkID the ID of the target network
-     *   @param to the address to send the tokens to
-     *   @param amount the amount of tokens to send
-     */
-    function bridgeTokens(
+    function bridgeToken(
         bytes32 channelId,
         address srcTokenAddress,
         uint256 tgtNetworkID,
         address to,
-        uint256 amount
-    ) external nonReentrant checkZeroAddress(to) checkZeroAmount(amount) {
+        uint256 tokenId
+    ) external nonReentrant checkZeroAddress(to) checkZeroAmount(srcTokenAddress, msg.sender, tokenId) checkBERC721(srcTokenAddress) {
         address sender = msg.sender;
-        address tgtTokenAddress = crossChainTokenRouter[srcTokenAddress][tgtNetworkID];
-        uint256 treasuryBalance = crossChainBalance[tgtNetworkID][tgtTokenAddress];
-        if (tgtTokenAddress == address(0)) {
-            revert TokenNotSupported(tgtTokenAddress);
-        }
-        if (treasuryBalance < amount) {
-            revert InsufficientTreasuryBalance(treasuryBalance, amount);
+        if (!isSupportedToken[srcTokenAddress][tgtNetworkID]) {
+            revert TokenCannotBeBridged();
         }
 
-        IERC20 token = IERC20(srcTokenAddress);
-        uint256 balance = token.balanceOf(sender);
-        if (balance < amount) {
-            revert InsufficientBalance(balance, amount);
+        IERC721 token = IERC721(srcTokenAddress);
+
+        uint256 spender = token.getApproved(tokenId);
+        if (spender != address(this)) {
+            revert InsufficientApproval(spender, tokenId);
         }
 
-        uint256 allowance = token.allowance(sender, address(this));
-        if (allowance < amount) {
-            revert InsufficientAllowance(allowance, amount);
-        }
+        token.safeTransferFrom(sender, address(this), tokenId);
 
-        token.safeTransferFrom(sender, address(this), amount);
-
-        crossChainBalance[tgtNetworkID][tgtTokenAddress] -= amount;
-
-        bytes memory bridgeData = abi.encode(block.chainid, tgtNetworkID, srcTokenAddress, tgtTokenAddress, sender, to, amount);
-        bytes memory payload = abi.encode(false, bridgeData);
+        bytes memory payload = abi.encode(block.chainid, tgtNetworkID, srcTokenAddress, sender, to, tokenId);
         _sendPacket(channelId, 10 hours, payload);
+
+        emit BridgeToken(payload);
     }
 
     /**

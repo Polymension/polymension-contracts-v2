@@ -23,7 +23,7 @@ contract PriceFeeds is Ownable {
 
     mapping(uint256 => bytes32) public priceFeeds;
 
-    constructor(address _oracle) Ownable() {
+    constructor(address _oracle, address _owner) Ownable(_owner) {
         oracle = IPythPriceFeeds(_oracle);
     }
 
