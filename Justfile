@@ -107,6 +107,13 @@ set-up-bridge:
     just sanity-check
     just create-channel
 
+set-up-bridge-nft:
+    echo "Running the full E2E flow..."
+    just set-contracts optimism PolyERC721 false && just set-contracts base PolyERC721 false
+    just deploy optimism base
+    just sanity-check
+    just create-channel
+
 # Clean up the environment by removing the artifacts and cache folders and running the forge clean command
 # Usage: just clean
 clean:

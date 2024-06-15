@@ -2,26 +2,26 @@
   "proofsEnabled": false,
   "isUniversal": false,
   "deploy": {
-    "optimism": "Bridge",
-    "base": "Bridge"
+    "optimism": "PolyERC721",
+    "base": "PolyERC721"
   },
   "createChannel": {
     "srcChain": "optimism",
-    "srcAddr": "0x79613abc014596a2C962b4A45cc4f57B741Bb49b",
+    "srcAddr": "0x1bDD524D496430b5261b994C4e932865E70e99eB",
     "dstChain": "base",
-    "dstAddr": "0x299A7Ec8269d79354A1546032120BC32f2598178",
+    "dstAddr": "0xDDd2e6beC6f737CA78A535feBc2a30DCe1BD4004",
     "version": "1.0",
     "ordering": 0,
     "fees": false
   },
   "sendPacket": {
     "optimism": {
-      "portAddr": "0x79613abc014596a2C962b4A45cc4f57B741Bb49b",
+      "portAddr": "0x1bDD524D496430b5261b994C4e932865E70e99eB",
       "channelId": "channel-40382",
       "timeout": 36000
     },
     "base": {
-      "portAddr": "0x299A7Ec8269d79354A1546032120BC32f2598178",
+      "portAddr": "0xDDd2e6beC6f737CA78A535feBc2a30DCe1BD4004",
       "channelId": "channel-40383",
       "timeout": 36000
     }
