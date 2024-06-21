@@ -2,27 +2,27 @@
   "proofsEnabled": false,
   "isUniversal": false,
   "deploy": {
-    "optimism": "Bridge",
-    "base": "Bridge"
+    "optimism": "Bridge2",
+    "base": "Bridge2"
   },
   "createChannel": {
     "srcChain": "optimism",
-    "srcAddr": "0x79613abc014596a2C962b4A45cc4f57B741Bb49b",
+    "srcAddr": "0x3af39Ee77a6e36Ed0bb2D0fB6bdb4b5763Fb88Ca",
     "dstChain": "base",
-    "dstAddr": "0x299A7Ec8269d79354A1546032120BC32f2598178",
+    "dstAddr": "0xB984f5b2D3d0A1059b5Bd00b8dC663aC7155BE7f",
     "version": "1.0",
     "ordering": 0,
     "fees": false
   },
   "sendPacket": {
     "optimism": {
-      "portAddr": "0x79613abc014596a2C962b4A45cc4f57B741Bb49b",
-      "channelId": "channel-40382",
+      "portAddr": "0x3af39Ee77a6e36Ed0bb2D0fB6bdb4b5763Fb88Ca",
+      "channelId": "channel-40702",
       "timeout": 36000
     },
     "base": {
-      "portAddr": "0x299A7Ec8269d79354A1546032120BC32f2598178",
-      "channelId": "channel-40383",
+      "portAddr": "0xB984f5b2D3d0A1059b5Bd00b8dC663aC7155BE7f",
+      "channelId": "channel-40703",
       "timeout": 36000
     }
   },
