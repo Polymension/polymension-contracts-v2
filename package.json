@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^4.9.6",
+    "@pythnetwork/entropy-sdk-solidity": "^1.5.0",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5"
   }
