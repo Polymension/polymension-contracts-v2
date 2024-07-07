@@ -23,21 +23,43 @@ contract UniswapV2 is Ownable {
     }
 
     /**
-     * @dev Swap ETH for tokens
-     * @param token The token address to swap ETH for
-     * @param to The address to send the swapped tokens to
+     * @dev Swap tokens for ETH
+     * @param _token The address of the token
+     * @param _to The address to receive ETH
      */
-    function swap(address token, address to) external payable {
+    function swapEthToToken(address _token, address _to) external payable returns (uint[] memory) {
         address[] memory path = new address[](2);
         path[0] = uniswapRouter.WETH();
-        path[1] = token;
+        path[1] = _token;
 
-        uniswapRouter.swapExactETHForTokensSupportingFeeOnTransferTokens{value: msg.value}(
-            0, // Minimum amount of tokens to accept, set to 0 for simplicity
-            path,
-            to,
-            block.timestamp
-        );
+        return
+            uniswapRouter.swapExactETHForTokens{value: msg.value}(
+                0, // Minimum amount of tokens to accept, set to 0 for simplicity
+                path,
+                _to,
+                block.timestamp
+            );
+    }
+
+    /**
+     * @dev Swap tokens for ETH
+     * @param _token The address of the token
+     * @param _amount The amount of token to swap
+     * @param _to The address to receive ETH
+     */
+    function swapTokenToEth(address _token, uint256 _amount, address _to) external returns (uint[] memory) {
+        address[] memory path = new address[](2);
+        path[0] = _token;
+        path[1] = uniswapRouter.WETH();
+
+        return
+            uniswapRouter.swapExactTokensForETH(
+                _amount,
+                0, // Minimum amount of ETH to accept, set to 0 for simplicity
+                path,
+                _to,
+                block.timestamp
+            );
     }
 
     /**
