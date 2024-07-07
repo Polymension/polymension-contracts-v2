@@ -12,7 +12,7 @@ contract CustomERC721 is ERC721Enumerable, Ownable {
     uint256 private _nextTokenId;
 
     address private bridgeContract;
-    
+
     mapping(uint256 => bool) private isBurn;
 
     modifier onlyBridgeContract() {
@@ -30,7 +30,7 @@ contract CustomERC721 is ERC721Enumerable, Ownable {
         _requireMinted(tokenId);
 
         string memory baseURI = _baseURI();
-        return bytes(baseURI).length > 0 ? string(abi.encodePacked(baseURI, tokenId.toString(), ".json")) : "";
+        return bytes(baseURI).length > 0 ? string(abi.encodePacked(baseURI, tokenId.toString(), '.json')) : '';
     }
 
     function setBridgeContract(address _bridgeContract) public onlyOwner {
@@ -47,20 +47,20 @@ contract CustomERC721 is ERC721Enumerable, Ownable {
         _safeMint(to, tokenId);
     }
 
-    function bridgeMint(address to, uint256 tokenId) internal {
+    function bridgeMint(address to, uint256 tokenId) internal onlyBridgeContract {
         _safeMint(to, tokenId);
     }
 
     function burn(uint256 tokenId) public virtual onlyBridgeContract {
         //solhint-disable-next-line max-line-length
-        require(isBurn[tokenId] == false, "This NFT has already been burnt");
-        require(_isApprovedOrOwner(_msgSender(), tokenId), "ERC721: caller is not token owner or approved");
+        require(isBurn[tokenId] == false, 'This NFT has already been burnt');
+        require(_isApprovedOrOwner(_msgSender(), tokenId), 'ERC721: caller is not token owner or approved');
         isBurn[tokenId] = true;
         _burn(tokenId);
     }
 
     function mintBack(address to, uint256 tokenId) public onlyBridgeContract {
-        require(isBurn[tokenId] == true, "This NFT has not been burnt yet");
+        require(isBurn[tokenId] == true, 'This NFT has not been burnt yet');
         isBurn[tokenId] = false;
         _mint(to, tokenId);
     }
