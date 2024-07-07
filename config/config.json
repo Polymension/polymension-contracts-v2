@@ -2,27 +2,27 @@
   "proofsEnabled": false,
   "isUniversal": false,
   "deploy": {
-    "optimism": "LotteryPolyERC721",
-    "base": "LotteryPolyERC721"
+    "optimism": "Bridge",
+    "base": "Bridge"
   },
   "createChannel": {
     "srcChain": "optimism",
-    "srcAddr": "0xba9A7a3fA331B453F147beCc93ea230a320291Dd",
+    "srcAddr": "0x8890483fD46B4628a0Ae7c8002916176b16196cB",
     "dstChain": "base",
-    "dstAddr": "0x6F6c07F0D2f8fEfB49662d533Ef3CfDc1EEA8fCA",
+    "dstAddr": "0x502227d0Bc30a196d5c5BA3f5dB0cA829645DBe4",
     "version": "1.0",
     "ordering": 0,
     "fees": false
   },
   "sendPacket": {
     "optimism": {
-      "portAddr": "0xba9A7a3fA331B453F147beCc93ea230a320291Dd",
-      "channelId": "channel-40710",
+      "portAddr": "0x8890483fD46B4628a0Ae7c8002916176b16196cB",
+      "channelId": "channel-40702",
       "timeout": 36000
     },
     "base": {
-      "portAddr": "0x6F6c07F0D2f8fEfB49662d533Ef3CfDc1EEA8fCA",
-      "channelId": "channel-40711",
+      "portAddr": "0x502227d0Bc30a196d5c5BA3f5dB0cA829645DBe4",
+      "channelId": "channel-40703",
       "timeout": 36000
     }
   },
