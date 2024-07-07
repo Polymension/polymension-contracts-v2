@@ -45,19 +45,19 @@ contract Bridge2 is CustomChanIbcApp, ReentrancyGuard {
     /**
      * @dev Set the oracle address.
      * This function can only be called by the owner of the contract.
-     * @param _oracleAddr The address of the oracle.
+     * @param _priceFeeds The address of the oracle.
      */
-    function setOracle(address _oracleAddr) external onlyOwner {
-        priceFeeds = IPriceFeeds(_oracleAddr);
+    function setPriceFeedsAddress(address _priceFeeds) external onlyOwner {
+        priceFeeds = IPriceFeeds(_priceFeeds);
     }
 
     /**
      * @dev Set the DEX address.
      * This function can only be called by the owner of the contract.
-     * @param _dexAddr The address of the DEX.
+     * @param _dex The address of the DEX.
      */
-    function setDex(address payable _dexAddr) external onlyOwner {
-        dex = IDex(_dexAddr);
+    function setDexAddress(address payable _dex) external onlyOwner {
+        dex = IDex(_dex);
     }
 
     /**
@@ -174,6 +174,18 @@ contract Bridge2 is CustomChanIbcApp, ReentrancyGuard {
     function onTimeoutPacket(IbcPacket calldata packet) external override onlyIbcDispatcher {
         timeoutPackets.push(packet);
         // do logic
+    }
+
+    /**
+     * @dev Withdraw the contract balance to the owner.
+     * This function can only be called by the owner of the contract.
+     * @param amount The amount to withdraw.
+     */
+    function withdraw(uint256 amount) external onlyOwner {
+        (bool sent, ) = payable(owner()).call{value: amount}('');
+        if (!sent) {
+            revert InsufficientBalance(address(this).balance, amount);
+        }
     }
 
     /**
