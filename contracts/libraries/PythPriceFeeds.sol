@@ -21,9 +21,11 @@ interface IPythPriceFeeds {
 contract PythPriceFeeds is Ownable {
     IPythPriceFeeds public oracle;
 
-    mapping(uint256 => bytes32) public priceFeeds;
+    mapping(uint256 => bytes32) public nativePriceFeeds;
+    mapping(address => bytes32) public tokenPriceFeeds;
 
     error ZeroAddress();
+    error NotFoundFeed();
 
     constructor(address _oracleAddr) Ownable() {
         oracle = IPythPriceFeeds(_oracleAddr);
@@ -34,12 +36,32 @@ contract PythPriceFeeds is Ownable {
         oracle = IPythPriceFeeds(_oracleAddr);
     }
 
-    function setPriceFeed(uint256 chainId, bytes32 feed) external onlyOwner {
-        priceFeeds[chainId] = feed;
+    function setNativePriceFeed(uint256 _chainId, bytes32 _feed) external onlyOwner {
+        nativePriceFeeds[_chainId] = _feed;
     }
 
-    function getPrice(uint256 chainId) external view returns (uint256) {
-        IPythPriceFeeds.Price memory data = oracle.getPriceUnsafe(priceFeeds[chainId]);
+    function setTokenPriceFeed(address _token, bytes32 _feed) external onlyOwner {
+        tokenPriceFeeds[_token] = _feed;
+    }
+
+    function getNativePrice(uint256 _chainId) external view returns (uint256) {
+        if (nativePriceFeeds[_chainId] == bytes32(0)) {
+            revert NotFoundFeed();
+        }
+
+        IPythPriceFeeds.Price memory data = oracle.getPriceUnsafe(nativePriceFeeds[_chainId]);
+
+        uint256 priceInWei = uint256(int256(data.price)) * 10 ** uint256(int256(18 + data.expo));
+
+        return priceInWei;
+    }
+
+    function getTokenPrice(address _token) external view returns (uint256) {
+        if (tokenPriceFeeds[_token] == bytes32(0)) {
+            revert NotFoundFeed();
+        }
+
+        IPythPriceFeeds.Price memory data = oracle.getPriceUnsafe(tokenPriceFeeds[_token]);
 
         uint256 priceInWei = uint256(int256(data.price)) * 10 ** uint256(int256(18 + data.expo));
 

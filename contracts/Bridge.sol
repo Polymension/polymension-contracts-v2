@@ -4,22 +4,53 @@ pragma solidity ^0.8.9;
 
 import './base/CustomChanIbcApp.sol';
 import {ReentrancyGuard} from '@openzeppelin/contracts/security/ReentrancyGuard.sol';
+import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import {IPriceFeeds} from './interfaces/IPriceFeeds.sol';
 import {IDex} from './interfaces/IDex.sol';
 
 contract Bridge is CustomChanIbcApp, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    enum BridgeType {
+        NATIVE_TO_NATIVE, // 0
+        NATIVE_TO_ERC20, // 1
+        ERC20_TO_ERC20, // 2
+        ERC20_TO_NATIVE // 3
+    }
+
     IPriceFeeds public priceFeeds;
     IDex public dex;
 
+    mapping(address => bool) public supportedTokens;
+    mapping(bytes32 => address) public tokenAddresses;
+
     error TokenNotSupported(address tokenAddress);
     error InsufficientBalance(uint256 balance, uint256 amount);
+    error InsufficientAllowance(uint256 allowance, uint256 amount);
     error InvalidCoinPrices();
+    error InvalidPayload();
     error ZeroAddress();
     error ZeroAmount();
+    error SwapFailed();
 
     modifier checkZeroAddress(address addr) {
         if (addr == address(0)) {
             revert ZeroAddress();
+        }
+        _;
+    }
+
+    modifier checkZeroAmount(uint256 amount) {
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
+        _;
+    }
+
+    modifier checkPayloadLength(uint256 payloadLength) {
+        if (payloadLength == 0) {
+            revert InvalidPayload();
         }
         _;
     }
@@ -45,45 +76,142 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
     }
 
     /**
-     * @dev Bridge the token from one network to another.
-     * Performs checks on address, amount, and token support status.
-     * Uses non-reentrant guard to prevent reentrancy attacks.
-     * @param _channelId The channel ID.
-     * @param _srcTokenAddress The address of the source token.
-     * @param _tgtNetworkId The ID of the target network.
-     * @param _tgtTokenAddress The address of the target token.
-     * @param _to The address to send the token to.
-     * @param _slippage The allowed slippage percentage.
-     * @param _timeoutSeconds The timeout in seconds.
+     * @dev Add a supported token.
+     * This function can only be called by the owner of the contract.
+     * @param _tokenAddress The address of the token.
      */
-    function bridge(
+    function addSupportedToken(address _tokenAddress) external onlyOwner {
+        supportedTokens[_tokenAddress] = true;
+    }
+
+    /**
+     * @dev Add a token address.
+     * This function can only be called by the owner of the contract.
+     * @param _tokenSymbol The symbol of the token.
+     * @param _tokenAddress The address of the token.
+     */
+    function addTokenAddress(bytes32 _tokenSymbol, address _tokenAddress) external onlyOwner {
+        tokenAddresses[_tokenSymbol] = _tokenAddress;
+    }
+
+    function nativeToNative(
         bytes32 _channelId,
-        address _srcTokenAddress,
-        uint256 _tgtNetworkId,
-        address _tgtTokenAddress,
-        address _to,
-        uint256 _amount,
-        uint256 _slippage,
+        bytes memory _payload,
         uint256 _timeoutSeconds
-    ) external payable nonReentrant checkZeroAddress(_to) {
-        uint256 amount = msg.value;
+    ) external payable nonReentrant checkPayloadLength(_payload.length) checkZeroAmount(msg.value) {
+        (uint256 targetNetworkId, address to, uint256 slippage) = abi.decode(_payload, (uint256, address, uint256));
 
-        if (msg.value == 0) {
-            try dex.swapTokenToEth(_srcTokenAddress, _amount, address(this)) returns (uint256[] memory amounts) {
-                amount = amounts[amounts.length - 1];
-            } catch {
-                revert TokenNotSupported(_srcTokenAddress);
-            }
-        }
+        uint256 amountIn = msg.value;
 
-        uint256 amountOut = _calculateAmountOut(block.chainid, _tgtNetworkId, amount);
+        uint256 amountOut = _calculateNativeAmountOut(block.chainid, targetNetworkId, amountIn);
 
-        bytes memory payload = abi.encode(block.chainid, _tgtNetworkId, _tgtTokenAddress, msg.sender, _to, amount, amountOut, _slippage);
+        bytes memory data = abi.encode(block.chainid, targetNetworkId, msg.sender, to, amountIn, amountOut, slippage);
+        bytes memory payload = abi.encode(BridgeType.NATIVE_TO_NATIVE, data);
+
         uint64 timeoutTimestamp = uint64((block.timestamp + _timeoutSeconds) * 1000000000);
 
         // calling the Dispatcher to send the packet
         dispatcher.sendPacket(_channelId, payload, timeoutTimestamp);
     }
+
+    function nativeToErc20(
+        bytes32 _channelId,
+        bytes memory _payload,
+        uint256 _timeoutSeconds
+    ) external payable nonReentrant checkPayloadLength(_payload.length) checkZeroAmount(msg.value) {
+        (uint256 targetNetworkId, bytes32 targetNativeToken, address targetTokenAddress, address to, uint256 slippage) = _decodeNativeToErc20Payload(
+            _payload
+        );
+
+        uint256 amountIn = msg.value;
+
+        bytes memory data = _encodeNativeToErc20Data(targetNetworkId, targetNativeToken, targetTokenAddress, to, amountIn, slippage);
+        bytes memory payload = abi.encode(BridgeType.NATIVE_TO_ERC20, data);
+
+        uint64 timeoutTimestamp = _calculateTimeoutTimestamp(_timeoutSeconds);
+
+        // calling the Dispatcher to send the packet
+        dispatcher.sendPacket(_channelId, payload, timeoutTimestamp);
+    }
+
+    function erc20ToNative(
+        bytes32 _channelId,
+        bytes memory _payload,
+        uint256 _timeoutSeconds
+    ) external nonReentrant checkPayloadLength(_payload.length) {
+        (uint256 targetNetworkId, address sourceTokenAddress, address to, uint256 amountIn, uint256 slippage) = abi.decode(
+            _payload,
+            (uint256, address, address, uint256, uint256)
+        );
+
+        if (!supportedTokens[sourceTokenAddress]) {
+            revert TokenNotSupported(sourceTokenAddress);
+        }
+
+        _transferSourceToken(sourceTokenAddress, amountIn);
+
+        uint256 nativeAmount = _calculateTokenToNativeAmountOut(sourceTokenAddress, amountIn);
+        uint256 amountOut = _calculateNativeAmountOut(block.chainid, targetNetworkId, nativeAmount);
+
+        bytes memory data = abi.encode(block.chainid, targetNetworkId, sourceTokenAddress, msg.sender, to, amountIn, amountOut, slippage);
+        bytes memory payload = abi.encode(BridgeType.ERC20_TO_NATIVE, data);
+
+        uint64 timeoutTimestamp = uint64((block.timestamp + _timeoutSeconds) * 1000000000);
+
+        // calling the Dispatcher to send the packet
+        dispatcher.sendPacket(_channelId, payload, timeoutTimestamp);
+    }
+
+    // function erc20ToErc20(
+    //     bytes32 _channelId,
+    //     bytes memory _payload,
+    //     uint256 _timeoutSeconds
+    // ) external nonReentrant checkPayloadLength(_payload.length) {
+    //     (
+    //         uint256 targetNetworkId,
+    //         address sourceTokenAddress,
+    //         bytes32 targetNativeToken,
+    //         address targetTokenAddress,
+    //         address to,
+    //         uint256 amountIn,
+    //         uint256 slippage
+    //     ) = abi.decode(_payload, (uint256, address, bytes32, address, address, uint256, uint256));
+
+    //     if (!supportedTokens[sourceTokenAddress]) {
+    //         revert TokenNotSupported(sourceTokenAddress);
+    //     }
+
+    //     IERC20 sourceToken = IERC20(sourceTokenAddress);
+
+    //     uint256 allowance = sourceToken.allowance(msg.sender, address(this));
+    //     if (allowance < amountIn) {
+    //         revert InsufficientAllowance(allowance, amountIn);
+    //     }
+
+    //     sourceToken.safeTransferFrom(msg.sender, address(this), amountIn);
+
+    //     uint256 nativeAmount = _calculateTokenToNativeAmountOut(sourceTokenAddress, amountIn);
+    //     uint256 amountOut = _calculateNativeAmountOut(block.chainid, targetNetworkId, nativeAmount);
+
+    //     bytes memory data = abi.encode(
+    //         block.chainid,
+    //         targetNetworkId,
+    //         sourceTokenAddress,
+    //         targetNativeToken,
+    //         targetTokenAddress,
+    //         msg.sender,
+    //         to,
+    //         amountIn,
+    //         amountOut,
+    //         slippage
+    //     );
+    //     bytes memory payload = abi.encode(BridgeType.ERC20_TO_ERC20, data);
+
+    //     uint64 timeoutTimestamp = uint64((block.timestamp + _timeoutSeconds) * 1000000000);
+
+    //     // calling the Dispatcher to send the packet
+    //     dispatcher.sendPacket(_channelId, payload, timeoutTimestamp);
+    // }
 
     /**
      * @dev Packet lifecycle callback that implements packet receipt logic and returns and acknowledgement packet.
@@ -106,7 +234,7 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
         ) = abi.decode(packet.data, (uint256, uint256, address, address, address, uint256, uint256, uint256));
 
         uint256 caBalance = address(this).balance;
-        uint256 calculatedAmountOut = _calculateAmountOut(srcNetworkId, tgtNetworkId, amountIn);
+        uint256 calculatedAmountOut = _calculateNativeAmountOut(srcNetworkId, tgtNetworkId, amountIn);
         uint256 minAmountOut = amountOut - ((amountOut * slippage) / 10000);
 
         if (calculatedAmountOut < minAmountOut) {
@@ -177,24 +305,61 @@ contract Bridge is CustomChanIbcApp, ReentrancyGuard {
         }
     }
 
-    /**
-     * @dev Calculates the output token amount based on source and target network prices.
-     * @param srcNetworkId ID of the source network.
-     * @param tgtNetworkId ID of the target network.
-     * @param amountIn Input amount of tokens.
-     * @return Calculated output amount of tokens.
-     *
-     * Fetches prices from the oracle. Reverts if prices are invalid.
-     */
-    function _calculateAmountOut(uint256 srcNetworkId, uint256 tgtNetworkId, uint256 amountIn) internal view returns (uint256) {
-        uint256 srcNetworkPrice = priceFeeds.getPrice(srcNetworkId);
-        uint256 tgtNetworkPrice = priceFeeds.getPrice(tgtNetworkId);
+    function _calculateTimeoutTimestamp(uint256 _timeoutSeconds) internal view returns (uint64) {
+        return uint64((block.timestamp + _timeoutSeconds) * 1000000000);
+    }
 
-        if (srcNetworkPrice <= 0 || tgtNetworkPrice <= 0) {
+    /**
+     * @dev Calculate the amount out.
+     * @param _sourceNetworkId The source network ID.
+     * @param _targetNetworkId The target network ID.
+     * @param _amountIn The amount in.
+     * @return The amount out.
+     */
+    function _calculateNativeAmountOut(uint256 _sourceNetworkId, uint256 _targetNetworkId, uint256 _amountIn) internal view returns (uint256) {
+        uint256 sourceNetworkPrice = priceFeeds.getNativePrice(_sourceNetworkId);
+        uint256 targetNetworkPrice = priceFeeds.getNativePrice(_targetNetworkId);
+
+        if (sourceNetworkPrice <= 0 || targetNetworkPrice <= 0) {
             revert InvalidCoinPrices();
         }
 
-        return (amountIn * tgtNetworkPrice) / srcNetworkPrice;
+        return (_amountIn * targetNetworkPrice) / sourceNetworkPrice;
+    }
+
+    function _calculateTokenToNativeAmountOut(address _tokenAddress, uint256 _tokenAmount) public view returns (uint256) {
+        uint256 tokenPrice = priceFeeds.getTokenPrice(_tokenAddress);
+        uint256 nativeCoinPrice = priceFeeds.getNativePrice(block.chainid);
+
+        return (_tokenAmount * tokenPrice) / nativeCoinPrice;
+    }
+
+    function _decodeNativeToErc20Payload(bytes memory _payload) internal pure returns (uint256, bytes32, address, address, uint256) {
+        return abi.decode(_payload, (uint256, bytes32, address, address, uint256));
+    }
+
+    function _encodeNativeToErc20Data(
+        uint256 targetNetworkId,
+        bytes32 targetNativeToken,
+        address targetTokenAddress,
+        address to,
+        uint256 amountIn,
+        uint256 slippage
+    ) internal view returns (bytes memory) {
+        uint256 amountOut = _calculateNativeAmountOut(block.chainid, targetNetworkId, amountIn);
+
+        return abi.encode(block.chainid, targetNetworkId, targetNativeToken, targetTokenAddress, msg.sender, to, amountIn, amountOut, slippage);
+    }
+
+    function _transferSourceToken(address sourceTokenAddress, uint256 amountIn) internal {
+        IERC20 sourceToken = IERC20(sourceTokenAddress);
+
+        uint256 allowance = sourceToken.allowance(msg.sender, address(this));
+        if (allowance < amountIn) {
+            revert InsufficientAllowance(allowance, amountIn);
+        }
+
+        sourceToken.safeTransferFrom(msg.sender, address(this), amountIn);
     }
 
     // Fallback function is called when msg.data is not empty
