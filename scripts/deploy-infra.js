@@ -17,13 +17,18 @@ function runVerifyContractCommand(command) {
 
 async function main() {
   // Deploy the contract
+  // npx hardhat run scripts/deploy-infra.js --network optimism
   console.log('Deploying infrastructure contracts...');
 
+  const bridgeAddress = '0x';
+
+  console.log('Deploying PythPriceFeeds');
   const oracleAddress = network.name === 'optimisim' ? '0x0708325268dF9F66270F1401206434524814508b' : '0xA2aa501b19aff244D90cc15a4Cf739D2725B5729';
   const pythPriceFeeds = await hre.ethers.deployContract('PythPriceFeeds', [oracleAddress]);
   await pythPriceFeeds.waitForDeployment();
 
-  const routerAddress = network.name === 'optimism' ? '0x0000000000000000000000000000000000000000' : '0x8cfb0faEA320A9Dfa41C1eF31eea88A50D1F020e';
+  console.log('Deploying UniswapV2');
+  const routerAddress = network.name === 'optimism' ? '0xf1072055810c670959aF73CB21f7f88Ce2A9c8d4' : '0x8cfb0faEA320A9Dfa41C1eF31eea88A50D1F020e';
   const uniswapV2 = await hre.ethers.deployContract('UniswapV2', [routerAddress]);
   await uniswapV2.waitForDeployment();
 

@@ -29,7 +29,7 @@ contract UniswapV2 is Ownable {
      * @param _token The address of the token
      * @param _to The address to receive ETH
      */
-    function swapEthToToken(address _token, address _to) external payable returns (uint[] memory) {
+    function swapNativeToToken(address _token, address _to) external payable returns (uint[] memory) {
         address[] memory path = new address[](2);
         path[0] = uniswapRouter.WETH();
         path[1] = _token;
@@ -50,7 +50,7 @@ contract UniswapV2 is Ownable {
      * @param _amount The amount of token to swap
      * @param _to The address to receive ETH
      */
-    function swapTokenToEth(address _token, uint256 _amount, address _to) external returns (uint256[] memory) {
+    function swapTokenToNative(address _token, uint256 _amount, address _to) external returns (uint256[] memory) {
         IERC20(_token).transferFrom(msg.sender, address(this), _amount);
         IERC20(_token).approve(address(uniswapRouter), _amount);
 
